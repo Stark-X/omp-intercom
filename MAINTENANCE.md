@@ -36,4 +36,6 @@ The optional Actions variable `INTERCOM_REVIEWER` selects the requested reviewer
 
 ## Releases
 
-When a PR merges into `master`, the **Release merged pull request** workflow increments the patch version in `package.json` and `package-lock.json`, pushes the version commit and matching `vX.Y.Z` tag, and publishes a GitHub Release. The release jobs run in sequence. Rerunning a job reuses its version commit and tag if they were already pushed. Branch and tag rules must allow the workflow to push those refs with `GITHUB_TOKEN`.
+When a PR merges into `master`, the **Release plugin changes** workflow checks its changed files. Changes to `src/` (excluding Markdown, reStructuredText, and license or notice files), `skills/`, `package.json`, or `package-lock.json` trigger a patch release. A PR limited to documentation, tests, or CI configuration skips the release. The workflow also checks the original path of renamed files.
+
+For an eligible PR, the workflow increments the patch version in `package.json` and `package-lock.json`, pushes the version commit and matching `vX.Y.Z` tag, and publishes a GitHub Release. The release jobs run in sequence. Rerunning a job reuses its version commit and tag if they were already pushed. Branch and tag rules must allow the workflow to push those refs with `GITHUB_TOKEN`.

@@ -1,4 +1,4 @@
-name: Release merged pull request
+name: Release plugin changes
 
 on:
   pull_request_target:
@@ -17,6 +17,7 @@ jobs:
       queue: max
     permissions:
       contents: write
+      pull-requests: read
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -30,9 +31,10 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - name: Publish the merged pull request
+      - name: Publish plugin changes
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_PR: ${{ github.event.pull_request.number }}
           MERGED_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
         run: bash .github/scripts/release.sh

@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if ! [[ "${RELEASE_PR:-}" =~ ^[1-9][0-9]*$ && "${MERGED_SHA:-}" =~ ^[0-9a-f]{40}$ ]]; then
+if ! [[ "${RELEASE_PR:-}" =~ ^[1-9][0-9]*$ && "${MERGED_SHA:-}" =~ ^[0-9a-f]{40}$ &&
+  "${PR_CHANGED_FILES:-}" =~ ^(0|[1-9][0-9]*)$ ]]; then
   printf 'Invalid merge metadata.\n' >&2
   exit 1
+fi
+
+release_required="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$RELEASE_PR/files?per_page=100" |
+  jq -rs --argjson expected "$PR_CHANGED_FILES" '
+    def affects_plugin:
+      . == "package.json" or . == "package-lock.json" or startswith("skills/") or
+      (startswith("src/") and (test("\\.(md|mdx|rst)$|/(LICENSE|NOTICE)(\\.[^/]+)?$"; "i") | not));
+
+    add
+    | if length == $expected then . else error("GitHub returned an incomplete list of PR files") end
+    | any(.[]; any(.filename, .previous_filename; type == "string" and affects_plugin))
+  ')"
+
+if [[ "$release_required" == false ]]; then
+  printf 'Skipped release for #%s because it does not change the plugin.\n' "$RELEASE_PR" | tee -a "$GITHUB_STEP_SUMMARY"
+  exit 0
 fi
 
 marker="Release-PR: $RELEASE_PR"
