@@ -1,0 +1,197 @@
+name: Upstream compatibility
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 05:23 UTC+8 every day.
+    - cron: "23 21 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compatibility-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  versions:
+    name: Resolve exact Pi, OMP, Bun and pi-intercom versions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - id: resolve
+        run: node .github/scripts/compatibility.mjs resolve
+
+  check:
+    name: Check ${{ matrix.scenario }}
+    needs: versions
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    uses: ./.github/workflows/integration.yml
+    with:
+      versions: ${{ toJSON(matrix.versions) }}
+      scenario: ${{ matrix.scenario }}
+
+  diagnose:
+    name: Assess compatibility results
+    needs: [versions, check]
+    if: ${{ !cancelled() && needs.versions.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      evidence: ${{ steps.evidence.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: report-*
+          path: ${{ runner.temp }}/reports
+      - id: diagnose
+        env:
+          COMPATIBILITY_MATRIX: ${{ needs.versions.outputs.matrix }}
+          REPORTS_DIR: ${{ runner.temp }}/reports
+        run: |
+          mkdir -p "$REPORTS_DIR"
+          node .github/scripts/compatibility.mjs diagnose
+      - name: Look for an open automated repair
+        id: existing
+        if: steps.diagnose.outputs.repair == 'true' && github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr="$(bash .github/scripts/find-repair-pr.sh)"
+          printf 'url=%s\n' "$pr" >> "$GITHUB_OUTPUT"
+          if [[ -n "$pr" ]]; then
+            printf '\nAn automated repair is already open: %s\n' "$pr" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Save confirmed regression evidence
+        id: evidence
+        if: steps.diagnose.outputs.repair == 'true' && steps.existing.outputs.url == '' && github.ref == 'refs/heads/master'
+        run: echo "artifact=compatibility-evidence-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - if: steps.evidence.outputs.artifact != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ steps.evidence.outputs.artifact }}
+          path: ${{ runner.temp }}/compatibility-evidence.json
+          if-no-files-found: error
+          retention-days: 7
+
+  propose:
+    name: Propose a compatibility patch with the configured model
+    needs: diagnose
+    if: ${{ !cancelled() && needs.diagnose.result == 'success' && needs.diagnose.outputs.evidence != '' && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      candidate: ${{ steps.patch.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ needs.diagnose.outputs.evidence }}
+          path: ${{ runner.temp }}/evidence
+      - name: Prepare repair prompt
+        run: |
+          cat .github/scripts/repair-prompt.md "$RUNNER_TEMP/evidence/compatibility-evidence.json" > "$RUNNER_TEMP/repair-prompt.md"
+      - name: Install the pinned repair agent
+        run: |
+          npm install --prefix "$RUNNER_TEMP/repair-cli" --ignore-scripts --no-audit --no-fund \
+            opencode-linux-x64-baseline@1.19.6
+      - name: Generate a patch with the configured provider
+        env:
+          REPAIR_API_KEY: ${{ secrets.REPAIR_API_KEY }}
+          REPAIR_BASE_URL: ${{ vars.REPAIR_BASE_URL }}
+          REPAIR_MODEL: ${{ vars.REPAIR_MODEL }}
+          REPAIR_API: ${{ vars.REPAIR_API }}
+        run: |
+          node .github/scripts/repair-provider.mjs \
+            "$RUNNER_TEMP/repair-cli/node_modules/opencode-linux-x64-baseline/bin/opencode" \
+            "$RUNNER_TEMP/repair-prompt.md"
+      - id: patch
+        name: Capture the candidate patch
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The repair agent produced no candidate patch." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git show "$GITHUB_SHA:.github/scripts/validate-repair.mjs" > "$RUNNER_TEMP/validate-repair.mjs"
+          node "$RUNNER_TEMP/validate-repair.mjs"
+          git diff --cached --binary > "$RUNNER_TEMP/repair.patch"
+          echo "candidate=repair-candidate-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - if: steps.patch.outputs.candidate != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ steps.patch.outputs.candidate }}
+          path: ${{ runner.temp }}/repair.patch
+          if-no-files-found: error
+          retention-days: 7
+
+  verify:
+    name: Verify repair on ${{ matrix.scenario }}
+    needs: [versions, propose]
+    if: ${{ !cancelled() && needs.propose.result == 'success' && needs.propose.outputs.candidate != '' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    uses: ./.github/workflows/integration.yml
+    with:
+      versions: ${{ toJSON(matrix.versions) }}
+      patch_artifact: ${{ needs.propose.outputs.candidate }}
+
+  publish:
+    name: Open repair PR and request review
+    needs: [diagnose, propose, verify]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && needs.propose.outputs.candidate != '' && github.ref == 'refs/heads/master' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ needs.propose.outputs.candidate }}
+          path: ${{ runner.temp }}/repair
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ needs.diagnose.outputs.evidence }}
+          path: ${{ runner.temp }}/evidence
+      - name: Publish the verified candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWER: ${{ vars.INTERCOM_REVIEWER || github.repository_owner }}
+        run: bash .github/scripts/open-repair-pr.sh

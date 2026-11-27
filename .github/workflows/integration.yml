@@ -1,0 +1,59 @@
+name: Cross-harness integration
+
+on:
+  workflow_call:
+    inputs:
+      versions:
+        description: Exact harness versions as JSON, or empty for the pinned baseline
+        type: string
+        default: ""
+      scenario:
+        description: Publish a result for this compatibility matrix case
+        type: string
+        default: ""
+      patch_artifact:
+        description: Verified separately from publication, using this candidate patch artifact
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  cross-harness:
+    name: Run Pi and OMP integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - if: inputs.patch_artifact != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ inputs.patch_artifact }}
+          path: ${{ runner.temp }}/repair
+      - name: Apply candidate
+        if: inputs.patch_artifact != ''
+        run: git apply --index "$RUNNER_TEMP/repair/repair.patch"
+      - run: npm ci
+      - name: Run unit tests on the candidate
+        if: inputs.patch_artifact != ''
+        run: npm test
+      - name: Install harnesses and test interoperability
+        env:
+          HARNESS_VERSIONS: ${{ inputs.versions }}
+          COMPATIBILITY_REPORT: ${{ inputs.scenario != '' }}
+        run: bash .github/scripts/run-integration.sh
+      - name: Save compatibility result
+        if: ${{ !cancelled() && inputs.scenario != '' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: report-${{ inputs.scenario }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/compatibility-report/report.json
+          if-no-files-found: ignore
+          retention-days: 7
