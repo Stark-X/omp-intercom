@@ -36,4 +36,6 @@ python3 tests/cross-harness.py /path/to/pi-intercom/index.ts
 
 ## 发布
 
-PR 合并到 `master` 后，**Release merged pull request** 工作流会递增 `package.json` 和 `package-lock.json` 中的补丁版本号，推送版本提交与对应的 `vX.Y.Z` tag，并创建 GitHub Release。发布任务依次执行。如果版本提交和 tag 已推送，重跑任务时会沿用它们。分支和 tag 规则需要允许工作流使用 `GITHUB_TOKEN` 推送这两个引用。
+PR 合并到 `master` 后，**Release plugin changes** 工作流会检查改动文件。修改 `src/` 中的源码或资源（Markdown、reStructuredText、许可证和声明文件除外）、`skills/`、`package.json` 或 `package-lock.json` 会触发补丁发布。只修改文档、测试或 CI 配置的 PR 会跳过发布。对于重命名的文件，工作流也会检查原路径。
+
+满足发布条件时，工作流会递增 `package.json` 和 `package-lock.json` 中的补丁版本号，推送版本提交与对应的 `vX.Y.Z` tag，并创建 GitHub Release。发布任务依次执行。如果版本提交和 tag 已推送，重跑任务时会沿用它们。分支和 tag 规则需要允许工作流使用 `GITHUB_TOKEN` 推送这两个引用。
