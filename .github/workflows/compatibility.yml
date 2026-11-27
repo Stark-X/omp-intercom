@@ -96,7 +96,7 @@ jobs:
           retention-days: 7
 
   propose:
-    name: Propose a compatibility patch with Codex
+    name: Propose a compatibility patch with the configured model
     needs: diagnose
     if: ${{ !cancelled() && needs.diagnose.result == 'success' && needs.diagnose.outputs.evidence != '' && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-24.04
@@ -111,14 +111,6 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - name: Check Codex credential availability
-        env:
-          OPENAI_CONFIGURED: ${{ secrets.OPENAI_API_KEY != '' }}
-        run: |
-          if [[ "$OPENAI_CONFIGURED" != "true" ]]; then
-            echo "::error::Configure the OPENAI_API_KEY GitHub Actions secret to enable automated repairs."
-            exit 1
-          fi
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: ${{ needs.diagnose.outputs.evidence }}
@@ -126,19 +118,27 @@ jobs:
       - name: Prepare repair prompt
         run: |
           cat .github/scripts/repair-prompt.md "$RUNNER_TEMP/evidence/compatibility-evidence.json" > "$RUNNER_TEMP/repair-prompt.md"
-      - uses: openai/codex-action@306c6a196a99dcc6582530c396a19d2672d5e9ec # v1.14
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: ${{ runner.temp }}/repair-prompt.md
-          permission-profile: ":workspace"
-          safety-strategy: drop-sudo
+      - name: Install the pinned repair agent
+        run: |
+          npm install --prefix "$RUNNER_TEMP/repair-cli" --ignore-scripts --no-audit --no-fund \
+            opencode-linux-x64-baseline@1.19.6
+      - name: Generate a patch with the configured provider
+        env:
+          REPAIR_API_KEY: ${{ secrets.REPAIR_API_KEY }}
+          REPAIR_BASE_URL: ${{ vars.REPAIR_BASE_URL }}
+          REPAIR_MODEL: ${{ vars.REPAIR_MODEL }}
+          REPAIR_API: ${{ vars.REPAIR_API }}
+        run: |
+          node .github/scripts/repair-provider.mjs \
+            "$RUNNER_TEMP/repair-cli/node_modules/opencode-linux-x64-baseline/bin/opencode" \
+            "$RUNNER_TEMP/repair-prompt.md"
       - id: patch
         name: Capture the candidate patch
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git add -A
           if git diff --cached --quiet; then
-            echo "Codex produced no candidate patch." >> "$GITHUB_STEP_SUMMARY"
+            echo "The repair agent produced no candidate patch." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           git show "$GITHUB_SHA:.github/scripts/validate-repair.mjs" > "$RUNNER_TEMP/validate-repair.mjs"
