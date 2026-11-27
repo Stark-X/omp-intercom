@@ -1,6 +1,6 @@
 # Maintenance
 
-English | [简体中文](MAINTENANCE.zh-CN.md)
+[简体中文](MAINTENANCE.zh-CN.md)
 
 ## Tests
 
@@ -12,6 +12,14 @@ python3 tests/cross-harness.py /path/to/pi-intercom/index.ts
 The cross-harness test expects `omp`, `pi`, and `pi-intercom` on `PATH` and uses a local model fixture. It checks broker sharing, delivery across projects, idle wake, quiet messages, reply correlation, session switching, and reconnect.
 
 The **Tests** GitHub Actions workflow runs unit tests on Node.js 20 and 24 and cross-harness integration tests with pinned versions on every push and pull request.
+
+## Translation maintenance
+
+The **Update Simplified Chinese translations** workflow runs when the English catalog, README, maintenance guide, or third-party notices change on the default branch. It also supports manual runs from the default branch. It reuses the repair model provider settings described below, sends only changed English strings for catalog translation, and opens one review PR for the updated Chinese files. For changed Markdown documents, it uses the current Chinese document as a reference.
+
+The workflow validates catalog keys and placeholders and checks that the translated Markdown preserves code blocks, inline code, headings, and link destinations. Review the translated prose before merging. The PR uses the repository Actions token and the same pull request creation permission as compatibility repairs. If a translation PR is already open, the workflow leaves it available for review and catches up on subsequent source changes after that PR merges.
+
+The workflow records the English source revisions in `.github/translation-sources.json`. The interface falls back to English for missing messages or incompatible placeholders while translations are pending. Tests enforce exact catalog parity when the English catalog matches its recorded revision.
 
 ## Compatibility maintenance
 

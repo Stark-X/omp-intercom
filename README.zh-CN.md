@@ -1,6 +1,6 @@
 # omp-intercom
 
-[English](README.md) | 简体中文
+[English](README.md)
 
 这是一个 [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) 扩展，支持会话间收发消息和交接工作。交互式命令使用 OMP 的终端界面。本地 OMP 和 Pi 会话通过 [pi-intercom](https://github.com/nicobailon/pi-intercom) 共用一个消息代理（broker），也可以在不同仓库之间通信。
 
@@ -25,7 +25,7 @@ npm ci
 omp -e "$PWD"
 ```
 
-将包目录传给 `omp -e` 即可加载扩展及其自带的 `intercom` 技能。要在每次启动时自动加载，请将仓库的绝对路径添加到 OMP `config.yml` 的 `extensions` 列表中。
+启动 OMP 时传入包目录，即可加载扩展及其自带的 `intercom` 技能。要在每次启动时自动加载，请将仓库的绝对路径添加到 OMP `config.yml` 的 `extensions` 列表中。
 
 ```yaml
 extensions:
@@ -38,13 +38,13 @@ extensions:
 
 ### 键盘操作
 
-- `/intercom` 或 **Alt+Shift+M** 打开会话列表。选中会话后，按 **Enter** 写消息，或按 **H** 发起交接。OMP 的 **Alt+M** 用于选择模型。
-- `/handover` 打开交接会话选择器。也可以输入 `/handover <会话> [下一步任务]`，用名称或会话 ID 指定接收方，或输入 `/handover <项目路径> [下一步任务]` 指定项目。名称或路径包含空格时请加引号。OMP 用当前模型生成摘要，编辑后按 **Ctrl+Q** 发送，按 **Esc** 取消。
+- `/intercom` 或 **Alt+Shift+M** 打开会话列表。选中会话后，按 **Enter** 或 **Tab** 写消息。按 **Shift+Tab** 可直接输入该会话的下一步任务，或按 **H** 发起交接。OMP 的 **Alt+M** 用于选择模型。
+- `/handover` 打开交接会话选择器。也可以输入 `/handover <session> [next task]`，用名称或会话 ID 指定接收方，或输入 `/handover <project path> [next task]` 指定项目。名称或路径包含空格时请加引号。OMP 用当前模型生成摘要，编辑后按 **Ctrl+Q** 发送，按 **Esc** 取消。
 - `/intercom-id` 将当前会话的 Intercom 联系方式插入输入框。
-- `/intercom-pool [名称|default]` 查看或切换当前的通信池。同一池内的会话可以互相发现。请在发出的提问收到回复或取消后再切换。
-- `/alias <名称>` 设置当前会话的别名。输入 `/alias` 或 `/alias menu` 可以打开重命名对话框。
+- `/intercom-pool [name|default]` 查看或切换当前的通信池。同一池内的会话可以互相发现。请在发出的提问收到回复或取消后再切换。
+- `/alias <name>` 设置当前会话的别名。输入 `/alias` 或 `/alias menu` 可以打开重命名对话框。
 
-按项目路径交接时，OMP 会使用该目录下已连接的会话。如果该目录下没有已连接的会话，并且当前运行在 Herdr 中，OMP 可以为项目打开一个新面板。交接选择器也可以查找已启用的 Herdr 机器上的会话。用 `/handover <名称@机器> [下一步任务]` 可以直接指定远程会话。远程交接通过 SSH 和接收机器上的 `pi-intercom` 命令行中继发送。
+按项目路径交接时，OMP 会使用该目录下已连接的会话。如果该目录下没有已连接的会话，并且当前运行在 Herdr 中，OMP 可以为项目打开一个新面板。交接选择器也可以查找已启用的 Herdr 机器上的会话。用 `/handover <name@machine> [next task]` 可以直接指定远程会话。远程交接通过 SSH 和接收机器上的 `pi-intercom` 命令行中继发送。
 
 ### 让 agent 执行
 
@@ -58,9 +58,11 @@ extensions:
 | `reply` | `message`，可选 `replyTo` 和 `to` | 回复收到的提问。如果有多个待回复的提问，请用 `replyTo` 指定要回复的提问。 |
 | `status` | | 显示当前会话 ID、连接状态、通信池和待回复的提问。 |
 
-可以使用目标会话的名称或唯一的会话 ID 前缀。名称重复时，请使用完整的会话 ID。默认情况下，收到的消息会唤醒空闲的 OMP 会话。会话正在处理当前轮次时，收到的消息会排队，留待后续轮次处理。设置 `noWake: true` 后，会话仍可读取消息，消息本身不会启动新一轮处理。
+可以使用目标会话的名称或唯一的会话 ID 前缀。名称重复时，请使用完整的会话 ID。默认情况下，收到的消息会唤醒空闲的 OMP 会话。会话正在处理当前轮次时，收到的消息会排队，留待后续轮次处理。接收端支持时，`noWake: true` 让会话读取消息但不主动启动新一轮。Pi 接收端需要 pi-intercom 0.19.0 或更高版本才能识别 `noWake`。
 
 ## 配置
+
+OMP 的 Intercom 面板和 slash command 文案支持英文与简体中文。用 `OMP_INTERCOM_LOCALE=en` 或 `OMP_INTERCOM_LOCALE=zh-CN` 覆盖终端语言。扩展依次读取 `LC_ALL`、`LC_MESSAGES` 和 `LANG`，遇到不支持的语言时使用英文。两种语言使用相同的命令名和会话池标识。
 
 OMP 默认使用 Pi 的消息代理目录 `~/.pi/agent/intercom/`。如果 Pi 设置了自定义的 `PI_CODING_AGENT_DIR`，请在启动 OMP 时将 `OMP_INTERCOM_PI_AGENT_DIR` 指向同一个 **Pi 代理目录**。OMP 仍使用独立的代理目录。如果设置了 `PI_INTERCOM_SCOPE_ID`，请在 Pi 和 OMP 中使用相同的值。
 
@@ -87,4 +89,4 @@ OMP_INTERCOM_PI_AGENT_DIR=/path/to/pi-agent OMP_INTERCOM_NAME=frontend omp -e "$
 
 ## 许可证
 
-本项目采用 MIT 许可证。适配器内置了 Nico Bailon 的 pi-intercom v0.19.0 中共用的 Intercom 代码。详见[第三方声明](THIRD_PARTY_NOTICES.md)。
+本项目采用 MIT 许可证。适配器内置了 Nico Bailon 的 pi-intercom v0.19.0 中共用的 Intercom 代码。详见[第三方声明](THIRD_PARTY_NOTICES.zh-CN.md)。

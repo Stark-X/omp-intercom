@@ -1,6 +1,6 @@
 # omp-intercom
 
-English | [简体中文](README.zh-CN.md)
+[简体中文](README.zh-CN.md)
 
 An [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) extension for messaging and handing over work between sessions. The interactive commands use OMP's terminal UI. OMP and [pi-intercom](https://github.com/nicobailon/pi-intercom) share a broker for local OMP and Pi sessions, including sessions in other repositories.
 
@@ -38,7 +38,7 @@ In Pi, install the matching release with `pi install npm:pi-intercom@0.19.0`. Ei
 
 ### From the keyboard
 
-- `/intercom` or **Alt+Shift+M** opens the session list. Select a peer and press **Enter** to compose a message, or press **H** to start a handover to that peer. In OMP, **Alt+M** opens the model selector.
+- `/intercom` or **Alt+Shift+M** opens the session list. Select a peer and press **Enter** or **Tab** to compose a message. Press **Shift+Tab** to enter the next task for the selected peer, or press **H** to start a handover to that peer. In OMP, **Alt+M** opens the model selector.
 - `/handover` opens the handover picker. Use `/handover <session> [next task]` to address a peer by name or session ID, or `/handover <project path> [next task]` to target a project. Quote names or paths containing spaces. OMP generates a summary with your current model. Edit it and save with **Ctrl+Q** to send it, or press **Esc** to cancel.
 - `/intercom-id` inserts a contact snippet for the current Intercom session into the composer.
 - `/intercom-pool [name|default]` shows or switches the current routing pool. Sessions see peers in the same pool. Finish or cancel an outgoing ask before switching pools.
@@ -58,9 +58,11 @@ Ask OMP to find another session or coordinate with it using the `intercom` tool 
 | `reply` | `message`, optional `replyTo` and `to` | Reply to an incoming ask. Use its `replyTo` ID if several asks are pending. |
 | `status` | | Show the current session ID, connection state, pool, and pending asks. |
 
-Use a peer's name or a unique session ID prefix. Use the full session ID when names collide. Inbound messages wake idle OMP sessions by default. During an active turn they queue for a later turn. `noWake: true` makes a message available without starting a turn on its own.
+Use a peer's name or a unique session ID prefix. Use the full session ID when names collide. Inbound messages wake idle OMP sessions by default. During an active turn they queue for a later turn. `noWake: true` makes a message available without starting a turn on its own when the recipient supports it. Pi recipients need pi-intercom 0.19.0 or later for `noWake`.
 
 ## Configuration
+
+Intercom's OMP panel and slash command messages support English and Simplified Chinese. Set `OMP_INTERCOM_LOCALE=en` or `OMP_INTERCOM_LOCALE=zh-CN` to override your terminal locale. Otherwise the extension reads `LC_ALL`, `LC_MESSAGES`, then `LANG`, and uses English for unsupported locales. Command names and pool identifiers stay the same in both languages.
 
 OMP uses the default Pi broker directory `~/.pi/agent/intercom/`. If Pi uses a custom `PI_CODING_AGENT_DIR`, set `OMP_INTERCOM_PI_AGENT_DIR` to that same **Pi agent directory** when launching OMP. OMP's own agent directory remains separate. If you set `PI_INTERCOM_SCOPE_ID`, use the same value for both harnesses.
 
@@ -83,7 +85,7 @@ Optional settings go in `intercom/config.json` under the active OMP agent direct
 
 Set `inboundTrigger` to `replies` to wake only for inbound replies, or `never` to keep unsolicited messages quiet. Replies to outstanding `ask` calls always resolve their waiting tool call. `confirmSend` prompts before interactive sends, asks, and handovers. You can also set `stableId`, `brokerCommand`, and `brokerArgs`. For remote delivery, `crossMachine.remoteCommand` defaults to `pi-intercom`.
 
-See the maintenance guide for development and repository automation ([English](MAINTENANCE.md) | [简体中文](MAINTENANCE.zh-CN.md)).
+See the [maintenance guide](MAINTENANCE.md) for development and repository automation.
 
 ## License
 

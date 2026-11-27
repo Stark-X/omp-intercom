@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { Translate } from "../i18n/index.ts";
 
 function readGitState(cwd: string): Promise<string | undefined> {
   return new Promise(resolve => {
@@ -16,12 +17,13 @@ export async function generateHandover(
   goal: string | undefined,
   remote: boolean,
   signal: AbortSignal,
+  t: Translate,
 ): Promise<string> {
-  if (!ctx.model) throw new Error("Select a model before generating a handover.");
-  if (!ctx.runEphemeralTurn) throw new Error("This OMP session cannot generate a handover summary.");
+  if (!ctx.model) throw new Error(t("handoverModelRequired"));
+  if (!ctx.runEphemeralTurn) throw new Error(t("handoverUnsupported"));
   if (!ctx.sessionManager.getBranch().some(entry =>
     entry.type === "message" || entry.type === "compaction" || entry.type === "branch_summary")) {
-    throw new Error("No conversation to hand over.");
+    throw new Error(t("handoverNoConversation"));
   }
 
   const [result, git] = await Promise.all([
@@ -39,7 +41,7 @@ ${goal ? `The operator specified the next task as ${JSON.stringify(goal)}.` : "I
   ]);
   signal.throwIfAborted();
   const body = result.replyText.trim();
-  if (!body) throw new Error("The current model returned an empty handover.");
+  if (!body) throw new Error(t("handoverEmpty"));
   const sessionFile = remote ? undefined : ctx.sessionManager.getSessionFile();
   return [
     `# Handover from ${sender}`, "", `Sender working directory: ${ctx.cwd}`,

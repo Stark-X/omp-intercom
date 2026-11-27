@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { english, type Translate } from "../i18n/index.ts";
 import type { IntercomClient } from "../vendor/pi-intercom/broker/client.ts";
 import { ReplyTracker } from "../vendor/pi-intercom/reply-tracker.ts";
 import type { Message, SessionInfo } from "../vendor/pi-intercom/types.ts";
@@ -151,12 +152,12 @@ export class Messaging {
   }
 }
 
-export function resolveAskTarget(sessions: SessionInfo[], to: string): SessionInfo {
+export function resolveAskTarget(sessions: SessionInfo[], to: string, t: Translate = english): SessionInfo {
   const exactId = sessions.find(session => session.id === to);
   if (exactId) return exactId;
   const named = sessions.filter(session => session.name?.toLowerCase() === to.toLowerCase());
   const matches = named.length ? named : sessions.filter(session => session.id.startsWith(to));
   if (matches.length === 1) return matches[0]!;
-  if (matches.length > 1) throw new Error(`Multiple sessions match "${to}". Use a full session ID.`);
-  throw new Error(`No connected session matches "${to}". Use list to find an online peer.`);
+  if (matches.length > 1) throw new Error(t("ambiguousPeer", { target: to }));
+  throw new Error(t("missingPeer", { target: to }));
 }

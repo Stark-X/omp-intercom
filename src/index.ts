@@ -4,6 +4,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@oh-my-pi
 import { registerIntercomCommands } from "./adapter/commands.ts";
 import { IntercomSession } from "./adapter/session.ts";
 import { registerIntercomTool } from "./adapter/tools.ts";
+import { createTranslator } from "./i18n/index.ts";
 import { getAskTimeoutMs, loadConfig } from "./vendor/pi-intercom/config.ts";
 
 export default function intercom(pi: ExtensionAPI) {
@@ -36,7 +37,7 @@ export default function intercom(pi: ExtensionAPI) {
   }
 
   registerIntercomTool(pi, () => session);
-  registerIntercomCommands(pi, () => session);
+  registerIntercomCommands(pi, () => session, createTranslator());
   pi.on("session_start", (_event, ctx) => startSession(ctx));
   pi.on("session_switch", (_event, ctx) => startSession(ctx));
   pi.on("session_clear", (_event, ctx) => startSession(ctx));
