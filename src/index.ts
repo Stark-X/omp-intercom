@@ -18,6 +18,8 @@ export default function intercom(pi: ExtensionAPI) {
 
   let session: IntercomSession | undefined;
   let shutdown = Promise.resolve();
+  // Ask IDs map to their broker session IDs, which can survive an OMP session switch.
+  const pendingAskCancellations = new Map<string, string>();
 
   function stopSession() {
     const previous = session;
@@ -28,7 +30,7 @@ export default function intercom(pi: ExtensionAPI) {
 
   function startSession(ctx: ExtensionContext) {
     const previousShutdown = stopSession();
-    session = new IntercomSession(pi, ctx, config, brokerEnv, askTimeoutMs, previousShutdown);
+    session = new IntercomSession(pi, ctx, config, brokerEnv, askTimeoutMs, previousShutdown, pendingAskCancellations);
     session.start();
   }
 

@@ -12,7 +12,7 @@ import { IntercomSession } from "../src/adapter/session.ts";
 import { IntercomClient } from "../src/vendor/pi-intercom/broker/client.ts";
 import { loadConfig } from "../src/vendor/pi-intercom/config.ts";
 
-async function connectPeers(t: TestContext) {
+async function connectPeers(t: TestContext, stableId?: string) {
   const directory = mkdtempSync(join(tmpdir(), "omp-intercom-"));
   const env = { ...process.env, PI_CODING_AGENT_DIR: directory };
   const brokerPath = fileURLToPath(new URL("../src/vendor/pi-intercom/broker/broker.ts", import.meta.url));
@@ -25,10 +25,14 @@ async function connectPeers(t: TestContext) {
   const context = {
     cwd: directory,
     isIdle: () => true,
-    sessionManager: { getSessionId: () => "omp" },
   } as ExtensionContext;
-  const config = loadConfig(join(directory, "config.json"));
-  const session = new IntercomSession(api, context, config, env, 60_000, Promise.resolve());
+  const config = { ...loadConfig(join(directory, "config.json")), stableId };
+  const pendingAskCancellations = new Map<string, string>();
+  function createSession(hostId: string, previousShutdown: Promise<void>, cancellations = pendingAskCancellations) {
+    const sessionContext = { ...context, sessionManager: { getSessionId: () => hostId } } as ExtensionContext;
+    return new IntercomSession(api, sessionContext, config, env, 60_000, previousShutdown, cancellations);
+  }
+  const session = createSession("omp", Promise.resolve());
 
   t.after(async () => {
     await Promise.allSettled([peer.disconnect(), session.stop()]);
@@ -49,7 +53,7 @@ async function connectPeers(t: TestContext) {
     startedAt: Date.now(),
     lastActivity: Date.now(),
   }, "peer");
-  return { session, initial, peer };
+  return { session, initial, peer, createSession };
 }
 
 async function dropConnection(client: IntercomClient, signal: AbortSignal) {
@@ -81,16 +85,21 @@ test("an OMP session can reply to a pending ask after reconnecting", { timeout: 
   assert.deepEqual(session.status().pendingAsks, []);
 });
 
-test("a peer can ask after OMP reconnects and abandons its outbound ask", { timeout: 15_000 }, async t => {
-  const { session, initial, peer } = await connectPeers(t);
+async function startOutboundAsk(session: IntercomSession, initial: IntercomClient, peer: IntercomClient, signal: AbortSignal) {
   const target = (await initial.listSessions()).find(entry => entry.id === peer.sessionId);
   assert.ok(target);
-  const received = once(peer, "message", { signal: t.signal });
+  const received = once(peer, "message", { signal });
   const outcome = session.messaging.ask(initial, target, "First question").catch((error: unknown) => error);
   const [, outbound] = await received;
   assert.equal(outbound.expectsReply, true);
-  // Wait for the broker's delivery response before dropping the sender socket.
+  // Wait for the broker's delivery response before closing the sender socket.
   await initial.listSessions();
+  return { outcome, target };
+}
+
+test("a peer can ask after OMP reconnects and abandons its outbound ask", { timeout: 15_000 }, async t => {
+  const { session, initial, peer } = await connectPeers(t);
+  const { outcome } = await startOutboundAsk(session, initial, peer, t.signal);
 
   await dropConnection(initial, t.signal);
   assert.match(String(await outcome), /Client disconnected/);
@@ -100,3 +109,29 @@ test("a peer can ask after OMP reconnects and abandons its outbound ask", { time
   assert.equal(inbound.delivered, true, inbound.code ?? inbound.reason);
   assert.deepEqual(session.status().pendingAsks.map(({ messageId }) => messageId), [inbound.id]);
 });
+
+for (const connected of [true, false]) {
+  test(`a stable ID can receive asks after switching sessions with the old socket ${connected ? "open" : "closed"}`,
+    { timeout: 15_000 }, async t => {
+      const { session, initial, peer, createSession } = await connectPeers(t, "stable-omp");
+      const { outcome, target } = await startOutboundAsk(session, initial, peer, t.signal);
+      if (!connected) await dropConnection(initial, t.signal);
+
+      // Use a fresh queue in the open case to verify that the old session itself completes cancellation.
+      const replacement = createSession("replacement", session.stop(), connected ? new Map() : undefined);
+      try {
+        await assert.rejects(session.messaging.ask(initial, target, "Question from a closing session"), /Intercom session ended/);
+        await replacement.connect();
+        assert.ok(await outcome instanceof Error);
+        assert.notEqual(replacement.hostId, session.hostId);
+        assert.equal(replacement.id, session.id);
+        assert.equal(peer.isConnected(), true);
+
+        const inbound = await peer.send(replacement.id, { text: "Reverse question", expectsReply: true, noWake: true });
+        assert.equal(inbound.delivered, true, inbound.code ?? inbound.reason);
+        assert.deepEqual(replacement.status().pendingAsks.map(({ messageId }) => messageId), [inbound.id]);
+      } finally {
+        await replacement.stop();
+      }
+    });
+}

@@ -26,10 +26,11 @@ export class IntercomSession {
     private readonly brokerEnv: NodeJS.ProcessEnv,
     askTimeoutMs: number,
     private readonly previousShutdown: Promise<void>,
+    pendingAskCancellations: Map<string, string>,
   ) {
     this.hostId = ctx.sessionManager.getSessionId();
     this.id = process.env.OMP_INTERCOM_STABLE_ID?.trim() || config.stableId || this.hostId;
-    this.messaging = new Messaging(askTimeoutMs);
+    this.messaging = new Messaging(askTimeoutMs, this.id, pendingAskCancellations);
   }
 
   private isCurrent(): boolean {
@@ -101,8 +102,15 @@ export class IntercomSession {
     this.stopped = true;
     clearTimeout(this.retryTimer);
     clearInterval(this.presenceTimer);
-    this.messaging.reset(new Error("Intercom session ended"));
-    await this.client?.disconnect();
+    this.messaging.close(new Error("Intercom session ended"));
+    await this.connection?.catch(() => {});
+    const client = this.client;
+    if (client?.isConnected()) {
+      await this.messaging.cancelAbandonedAsks(client).catch(() => {
+        // Keep unconfirmed cancellations for the next session with this broker ID.
+      });
+    }
+    await client?.disconnect();
     await this.previousShutdown;
   }
 

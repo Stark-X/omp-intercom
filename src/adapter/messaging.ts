@@ -26,11 +26,15 @@ export function messageBody(message: Message): string {
 export class Messaging {
   readonly tracker: ReplyTracker;
   private readonly waiters = new Map<string, ReplyWaiter>();
-  private readonly abandonedAsks = new Set<string>();
   private readonly seen = new Set<string>();
   private readonly replying = new Set<string>();
+  private closedError?: Error;
 
-  constructor(private readonly askTimeoutMs: number) {
+  constructor(
+    private readonly askTimeoutMs: number,
+    private readonly sessionId: string,
+    private readonly pendingAskCancellations = new Map<string, string>(),
+  ) {
     this.tracker = new ReplyTracker(askTimeoutMs);
   }
 
@@ -51,30 +55,45 @@ export class Messaging {
   }
 
   rejectOutboundAsks(error: Error): void {
-    for (const waiter of this.waiters.values()) waiter.reject(error);
+    for (const [id, waiter] of this.waiters) {
+      this.pendingAskCancellations.set(id, this.sessionId);
+      waiter.reject(error);
+    }
   }
 
-  reset(error: Error): void {
+  close(error: Error): void {
+    this.closedError = error;
     this.rejectOutboundAsks(error);
     this.tracker.reset();
   }
 
   async cancelAbandonedAsks(client: Pick<IntercomClient, "cancelAsk" | "listSessions">): Promise<void> {
-    while (this.abandonedAsks.size > 0) {
-      const batch = Array.from(this.abandonedAsks).slice(0, CANCELLATION_BATCH_SIZE);
+    const pending = Array.from(this.pendingAskCancellations)
+      .filter(([, sessionId]) => sessionId === this.sessionId)
+      .map(([id]) => id);
+    for (let offset = 0; offset < pending.length; offset += CANCELLATION_BATCH_SIZE) {
+      const batch = pending.slice(offset, offset + CANCELLATION_BATCH_SIZE);
       for (const id of batch) client.cancelAsk(id);
       // The broker processes frames in order. Its list reply confirms it processed preceding cancellations.
       await client.listSessions();
-      for (const id of batch) this.abandonedAsks.delete(id);
+      for (const id of batch) this.pendingAskCancellations.delete(id);
     }
   }
 
   async ask(client: Pick<IntercomClient, "send" | "cancelAsk" | "isConnected">, target: SessionInfo, text: string, signal?: AbortSignal) {
+    if (this.closedError) throw this.closedError;
     signal?.throwIfAborted();
     const id = randomUUID();
     const controller = new AbortController();
     const reply = new Promise<Message>((resolve, reject) => {
-      this.waiters.set(id, { senderId: target.id, resolve, reject });
+      this.waiters.set(id, {
+        senderId: target.id,
+        resolve,
+        reject(error) {
+          reject(error);
+          controller.abort();
+        },
+      });
     });
     const abort = () => this.waiters.get(id)?.reject(new Error("Intercom ask cancelled"));
     signal?.addEventListener("abort", abort, { once: true });
@@ -103,10 +122,12 @@ export class Messaging {
       signal?.removeEventListener("abort", abort);
       if (!completed) {
         controller.abort();
-        if (client.isConnected()) {
-          client.cancelAsk(id);
-        } else {
-          this.abandonedAsks.add(id);
+        if (!this.pendingAskCancellations.has(id)) {
+          if (client.isConnected()) {
+            client.cancelAsk(id);
+          } else {
+            this.pendingAskCancellations.set(id, this.sessionId);
+          }
         }
       }
     }
