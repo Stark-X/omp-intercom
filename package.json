@@ -1,17 +1,27 @@
 {
   "name": "omp-intercom",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A pi-intercom adapter for Oh My Pi",
   "license": "MIT",
   "type": "module",
-  "keywords": ["omp-plugin", "intercom", "oh-my-pi"],
+  "keywords": [
+    "omp-plugin",
+    "intercom",
+    "oh-my-pi"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Stark-X/omp-intercom.git"
   },
-  "files": ["src", "skills", "THIRD_PARTY_NOTICES.md"],
+  "files": [
+    "src",
+    "skills",
+    "THIRD_PARTY_NOTICES.md"
+  ],
   "omp": {
-    "extensions": ["./src/index.ts"]
+    "extensions": [
+      "./src/index.ts"
+    ]
   },
   "scripts": {
     "test": "node --import tsx --test tests/*.test.ts"
