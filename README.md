@@ -6,7 +6,7 @@ An [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) extension for messaging
 
 ## Install
 
-Verified with OMP **19.2.1** and pi-intercom **0.19.0**. The default broker launcher requires Node.js 20 or later on `PATH`.
+Verified with OMP **19.2.1** and pi-intercom **0.19.0**. OMP starts the broker with its own Bun runtime by default. The standalone OMP binary includes Bun.
 
 ### With the OMP plugin manager
 

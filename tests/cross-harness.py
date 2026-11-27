@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -174,6 +175,18 @@ def run(pi_extension):
         )
         for folder in (omp_dir, pi_dir, omp_project, pi_project):
             folder.mkdir()
+        # Exercise an installed plugin with tsx available and no system Node on OMP's PATH.
+        installed_extension = root / "plugins/node_modules/omp-intercom"
+        for folder in ("src", "skills"):
+            shutil.copytree(ROOT / folder, installed_extension / folder)
+        shutil.copyfile(ROOT / "package.json", installed_extension / "package.json")
+        (installed_extension / "node_modules").symlink_to(ROOT / "node_modules", target_is_directory=True)
+        omp_bin = root / "omp-bin"
+        omp_bin.mkdir()
+        for command in ("omp", "bun"):
+            executable = shutil.which(command)
+            if executable:
+                (omp_bin / command).symlink_to(Path(executable).resolve())
         env = {
             **os.environ,
             "XDG_CONFIG_HOME": str(root / "config"),
@@ -226,8 +239,8 @@ def run(pi_extension):
             stack.callback(stop_broker)
             omp = stack.enter_context(Rpc(
                 ["omp", "--mode", "rpc", "--no-ui", "--no-session", "--no-extensions", "--offline",
-                 "--model", "fixture/omp-smoke", "-e", str(ROOT)],
-                omp_project, omp_env,
+                 "--model", "fixture/omp-smoke", "-e", str(installed_extension)],
+                omp_project, dict(omp_env, PATH=str(omp_bin)),
             ))
             state = omp.call("get_state")
             omp_id = state["sessionId"]
