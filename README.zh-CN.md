@@ -8,6 +8,16 @@
 
 已在 OMP **19.2.1** 和 pi-intercom **0.19.0** 上验证。默认的消息代理启动程序要求 `PATH` 中有 Node.js 20 或更高版本。
 
+### 使用 OMP 插件管理器
+
+```sh
+omp plugin install github:Stark-X/omp-intercom
+```
+
+下次启动 OMP 时会加载已安装的插件。要获取仓库默认分支的新提交，运行 `omp plugin upgrade omp-intercom`，然后重启 OMP。要安装指定版本，可以在安装来源后加上 `#vX.Y.Z` 格式的 GitHub tag。
+
+### 从本地仓库加载
+
 ```sh
 git clone https://github.com/Stark-X/omp-intercom.git
 cd omp-intercom

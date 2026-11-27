@@ -1,7 +1,7 @@
-name: Release merged compatibility repair
+name: Release merged pull request
 
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
     branches: [master]
 
@@ -11,15 +11,10 @@ permissions:
 jobs:
   release:
     name: Bump the patch version on master and publish a GitHub Release
-    if: >-
-      github.event.pull_request.merged == true &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      startsWith(github.event.pull_request.head.ref, 'automation/intercom-compatibility/') &&
-      github.event.pull_request.user.login == 'github-actions[bot]' &&
-      github.event.pull_request.merged_by.login == (vars.INTERCOM_REVIEWER || github.repository_owner)
+    if: github.event.pull_request.merged == true
     concurrency:
       group: intercom-release-master
-      cancel-in-progress: false
+      queue: max
     permissions:
       contents: write
     runs-on: ubuntu-24.04
@@ -27,6 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          # This job can write to the repository. Load the release script from master.
           ref: master
           fetch-depth: 0
           persist-credentials: false
@@ -34,9 +30,9 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - name: Publish the reviewed repair
+      - name: Publish the merged pull request
         env:
           GH_TOKEN: ${{ github.token }}
-          COMPATIBILITY_PR: ${{ github.event.pull_request.number }}
+          RELEASE_PR: ${{ github.event.pull_request.number }}
           MERGED_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: bash .github/scripts/release.sh
