@@ -118,7 +118,7 @@ export class IntercomSession {
     client.on("disconnected", (error: Error) => {
       if (this.client !== client || !this.isCurrent()) return;
       this.lastError = error.message;
-      this.messaging.reset(error);
+      this.messaging.rejectOutboundAsks(error);
       this.scheduleReconnect();
     });
     client.on("message", (from: SessionInfo, message: Message) => this.receive(client, from, message));

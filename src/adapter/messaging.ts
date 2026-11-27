@@ -48,8 +48,12 @@ export class Messaging {
     return "inbound";
   }
 
-  reset(error: Error): void {
+  rejectOutboundAsks(error: Error): void {
     for (const waiter of this.waiters.values()) waiter.reject(error);
+  }
+
+  reset(error: Error): void {
+    this.rejectOutboundAsks(error);
     this.tracker.reset();
   }
 
