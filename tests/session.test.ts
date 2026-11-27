@@ -5,14 +5,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { IntercomSession } from "../src/adapter/session.ts";
 import { IntercomClient } from "../src/vendor/pi-intercom/broker/client.ts";
 import { loadConfig } from "../src/vendor/pi-intercom/config.ts";
 
-test("an OMP session can reply to a pending ask after reconnecting", { timeout: 15_000 }, async t => {
+async function connectPeers(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), "omp-intercom-"));
   const env = { ...process.env, PI_CODING_AGENT_DIR: directory };
   const brokerPath = fileURLToPath(new URL("../src/vendor/pi-intercom/broker/broker.ts", import.meta.url));
@@ -20,18 +20,18 @@ test("an OMP session can reply to a pending ask after reconnecting", { timeout: 
     env,
     stdio: ["ignore", "pipe", "inherit"],
   });
-  const sender = new IntercomClient(env);
-  const api = { getSessionName: () => "receiver", sendMessage() {} } as ExtensionAPI;
+  const peer = new IntercomClient(env);
+  const api = { getSessionName: () => "omp", sendMessage() {} } as ExtensionAPI;
   const context = {
     cwd: directory,
     isIdle: () => true,
-    sessionManager: { getSessionId: () => "receiver" },
+    sessionManager: { getSessionId: () => "omp" },
   } as ExtensionContext;
   const config = loadConfig(join(directory, "config.json"));
-  const receiver = new IntercomSession(api, context, config, env, 60_000, Promise.resolve());
+  const session = new IntercomSession(api, context, config, env, 60_000, Promise.resolve());
 
   t.after(async () => {
-    await Promise.allSettled([sender.disconnect(), receiver.stop()]);
+    await Promise.allSettled([peer.disconnect(), session.stop()]);
     if (broker.exitCode === null && broker.signalCode === null && broker.pid) {
       const exited = once(broker, "exit");
       broker.kill();
@@ -41,34 +41,62 @@ test("an OMP session can reply to a pending ask after reconnecting", { timeout: 
   });
 
   await once(broker.stdout, "data", { signal: t.signal });
-  const initial = await receiver.connect();
-  await sender.connect({
+  const initial = await session.connect();
+  await peer.connect({
     cwd: directory,
     model: "fixture",
     pid: process.pid,
     startedAt: Date.now(),
     lastActivity: Date.now(),
-  }, "sender");
-  const ask = await sender.send(receiver.id, { text: "Question", expectsReply: true, noWake: true });
-  assert.equal(ask.delivered, true);
-  assert.deepEqual(receiver.status().pendingAsks.map(({ messageId }) => messageId), [ask.id]);
+  }, "peer");
+  return { session, initial, peer };
+}
 
-  const disconnected = once(initial, "disconnected", { signal: t.signal });
-  const socket = Reflect.get(initial, "socket") as Socket;
+async function dropConnection(client: IntercomClient, signal: AbortSignal) {
+  const disconnected = once(client, "disconnected", { signal });
+  const socket = Reflect.get(client, "socket") as Socket;
   socket.destroy();
   await disconnected;
+}
 
-  const reconnected = await receiver.connect();
+test("an OMP session can reply to a pending ask after reconnecting", { timeout: 15_000 }, async t => {
+  const { session, initial, peer } = await connectPeers(t);
+  const ask = await peer.send(session.id, { text: "Question", expectsReply: true, noWake: true });
+  assert.equal(ask.delivered, true);
+  assert.deepEqual(session.status().pendingAsks.map(({ messageId }) => messageId), [ask.id]);
+
+  await dropConnection(initial, t.signal);
+  const reconnected = await session.connect();
   assert.notEqual(reconnected, initial);
-  assert.equal(reconnected.sessionId, receiver.id);
-  assert.equal(sender.isConnected(), true);
+  assert.equal(reconnected.sessionId, session.id);
+  assert.equal(peer.isConnected(), true);
 
   const [[, message], reply] = await Promise.all([
-    once(sender, "message", { signal: t.signal }),
-    receiver.messaging.reply(reconnected, "Answer", { replyTo: ask.id }),
+    once(peer, "message", { signal: t.signal }),
+    session.messaging.reply(reconnected, "Answer", { replyTo: ask.id }),
   ]);
   assert.equal(reply.result.delivered, true);
   assert.equal(message.replyTo, ask.id);
   assert.equal(message.content.text, "Answer");
-  assert.deepEqual(receiver.status().pendingAsks, []);
+  assert.deepEqual(session.status().pendingAsks, []);
+});
+
+test("a peer can ask after OMP reconnects and abandons its outbound ask", { timeout: 15_000 }, async t => {
+  const { session, initial, peer } = await connectPeers(t);
+  const target = (await initial.listSessions()).find(entry => entry.id === peer.sessionId);
+  assert.ok(target);
+  const received = once(peer, "message", { signal: t.signal });
+  const outcome = session.messaging.ask(initial, target, "First question").catch((error: unknown) => error);
+  const [, outbound] = await received;
+  assert.equal(outbound.expectsReply, true);
+  // Wait for the broker's delivery response before dropping the sender socket.
+  await initial.listSessions();
+
+  await dropConnection(initial, t.signal);
+  assert.match(String(await outcome), /Client disconnected/);
+  await session.connect();
+
+  const inbound = await peer.send(session.id, { text: "Question in reverse", expectsReply: true, noWake: true });
+  assert.equal(inbound.delivered, true, inbound.code ?? inbound.reason);
+  assert.deepEqual(session.status().pendingAsks.map(({ messageId }) => messageId), [inbound.id]);
 });

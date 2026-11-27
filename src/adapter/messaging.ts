@@ -10,6 +10,7 @@ interface ReplyWaiter {
 }
 
 const MAX_SEEN_MESSAGES = 4096;
+const CANCELLATION_BATCH_SIZE = 32;
 
 export function sessionLabel(session: SessionInfo): string {
   return session.name || session.id;
@@ -25,6 +26,7 @@ export function messageBody(message: Message): string {
 export class Messaging {
   readonly tracker: ReplyTracker;
   private readonly waiters = new Map<string, ReplyWaiter>();
+  private readonly abandonedAsks = new Set<string>();
   private readonly seen = new Set<string>();
   private readonly replying = new Set<string>();
 
@@ -57,7 +59,17 @@ export class Messaging {
     this.tracker.reset();
   }
 
-  async ask(client: Pick<IntercomClient, "send" | "cancelAsk">, target: SessionInfo, text: string, signal?: AbortSignal) {
+  async cancelAbandonedAsks(client: Pick<IntercomClient, "cancelAsk" | "listSessions">): Promise<void> {
+    while (this.abandonedAsks.size > 0) {
+      const batch = Array.from(this.abandonedAsks).slice(0, CANCELLATION_BATCH_SIZE);
+      for (const id of batch) client.cancelAsk(id);
+      // The broker processes frames in order. Its list reply confirms it processed preceding cancellations.
+      await client.listSessions();
+      for (const id of batch) this.abandonedAsks.delete(id);
+    }
+  }
+
+  async ask(client: Pick<IntercomClient, "send" | "cancelAsk" | "isConnected">, target: SessionInfo, text: string, signal?: AbortSignal) {
     signal?.throwIfAborted();
     const id = randomUUID();
     const controller = new AbortController();
@@ -91,7 +103,11 @@ export class Messaging {
       signal?.removeEventListener("abort", abort);
       if (!completed) {
         controller.abort();
-        client.cancelAsk(id);
+        if (client.isConnected()) {
+          client.cancelAsk(id);
+        } else {
+          this.abandonedAsks.add(id);
+        }
       }
     }
   }

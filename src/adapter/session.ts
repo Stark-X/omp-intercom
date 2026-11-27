@@ -136,9 +136,14 @@ export class IntercomSession {
       lastActivity: Date.now(),
       acknowledgesReceipts: true,
     }, this.id);
-    if (!this.isCurrent() || !client.isConnected()) {
+    try {
+      await this.messaging.cancelAbandonedAsks(client);
+      if (!this.isCurrent() || !client.isConnected()) {
+        throw new Error("Intercom connection closed during registration");
+      }
+    } catch (error) {
       await client.disconnect();
-      throw new Error("Intercom connection closed during registration");
+      throw error;
     }
     this.lastError = undefined;
     this.retryDelay = 1000;

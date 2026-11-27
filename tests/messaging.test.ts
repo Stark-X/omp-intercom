@@ -26,7 +26,7 @@ function inbound(id: string, options: Partial<Message> = {}): Message {
   return { id, timestamp: Date.now(), content: { text: "fixture" }, ...options };
 }
 
-type Outbound = Pick<IntercomClient, "send" | "cancelAsk">;
+type Outbound = Parameters<Messaging["ask"]>[0];
 
 test("matches an early reply from the addressed peer and suppresses duplicates", async () => {
   const messaging = new Messaging(1000);
@@ -43,6 +43,7 @@ test("matches an early reply from the addressed peer and suppresses duplicates",
     cancelAsk() {
       assert.fail("Successful asks should stay completed");
     },
+    isConnected: () => true,
   };
   const result = await messaging.ask(client, peer, "question");
   assert.equal(result.message.replyTo, result.id);
@@ -63,6 +64,7 @@ test("aborting an ask cancels its broker edge and releases the waiter", async ()
     cancelAsk(id) {
       assert.equal(id, askId);
     },
+    isConnected: () => true,
   };
   const asking = messaging.ask(client, peer, "question", abort.signal);
   abort.abort();
@@ -71,19 +73,50 @@ test("aborting an ask cancels its broker edge and releases the waiter", async ()
   assert.equal(messaging.accept(peer, inbound("late", { replyTo: askId })), "inbound");
 });
 
+test("retries an abandoned ask cancellation when reconnecting is interrupted", async () => {
+  const messaging = new Messaging(1000);
+  const abort = new AbortController();
+  let askId: string | undefined;
+  const disconnected: Outbound = {
+    async send(_to, options) {
+      askId = options.messageId;
+      return delivered;
+    },
+    cancelAsk() {
+      assert.fail("A disconnected client cannot cancel asks");
+    },
+    isConnected: () => false,
+  };
+  const asking = messaging.ask(disconnected, peer, "question", abort.signal);
+  abort.abort();
+  await assert.rejects(asking, /cancelled/);
+  assert.ok(askId);
+
+  const cancelled: string[] = [];
+  const cancelAsk = (id: string) => { cancelled.push(id); };
+  const interrupted = {
+    cancelAsk,
+    async listSessions() {
+      throw new Error("Connection lost");
+    },
+  };
+  await assert.rejects(messaging.cancelAbandonedAsks(interrupted), /Connection lost/);
+  const reconnected = { cancelAsk, listSessions: async () => [] };
+  await messaging.cancelAbandonedAsks(reconnected);
+  await messaging.cancelAbandonedAsks(reconnected);
+  assert.deepEqual(cancelled, [askId, askId]);
+});
+
 test("reply uses the inbound ask ID and preserves a pending ask when delivery can be retried", async () => {
   const messaging = new Messaging(1000);
   assert.equal(messaging.accept(peer, inbound("ask-id", { expectsReply: true })), "inbound");
   let attempt = 0;
-  const client: Outbound = {
+  const client: Pick<IntercomClient, "send"> = {
     async send(to, options) {
       assert.equal(to, peer.id);
       assert.equal(options.replyTo, "ask-id");
       attempt += 1;
       return attempt === 1 ? { ...delivered, delivered: false, delivery: "failed" } : delivered;
-    },
-    cancelAsk() {
-      assert.fail("Reply does not start an ask");
     },
   };
   await messaging.reply(client, "answer", {});
