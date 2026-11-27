@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { createRequire } from "module";
@@ -18,35 +18,25 @@ import {
   type BrokerConnectTarget,
 } from "./paths.ts";
 
-const EXTENSION_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+const PACKAGE_DIR = fileURLToPath(new URL("../../../../", import.meta.url));
 const BROKER_STARTUP_STDERR_LIMIT = 4_000;
 
 type BrokerLaunchSpec = {
   command: string;
   args: string[];
   captureStartupStderr: boolean;
+  envOverrides?: NodeJS.ProcessEnv;
 };
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export function getTsxLoaderPath(extensionDir: string = EXTENSION_DIR): string {
-  // Resolve tsx via Node's module resolution so it works regardless of whether
-  // tsx is bundled under extensionDir/node_modules or hoisted to a workspace
-  // root by npm. The tsx package main entry is its loader. If resolution
-  // fails, prefer the flat plugin-store layout before the legacy nested
-  // fallback.
-  try {
-    const requireFromExtension = createRequire(join(extensionDir, "package.json"));
-    return requireFromExtension.resolve("tsx");
-  } catch {
-    const siblingTsxLoader = join(extensionDir, "..", "tsx", "dist", "loader.mjs");
-    if (existsSync(siblingTsxLoader)) {
-      return siblingTsxLoader;
-    }
-    return join(extensionDir, "node_modules", "tsx", "dist", "loader.mjs");
-  }
+export function getTsxLoaderPath(packageDir: string = PACKAGE_DIR): string {
+  // The package's dependency can be hoisted or installed alongside the real
+  // package directory in a symlinked Bun plugin store.
+  const requireFromPackage = createRequire(join(realpathSync(packageDir), "package.json"));
+  return requireFromPackage.resolve("tsx");
 }
 
 function usesDefaultBrokerCommand(brokerCommand: string, brokerArgs: string[]): boolean {
@@ -54,13 +44,6 @@ function usesDefaultBrokerCommand(brokerCommand: string, brokerArgs: string[]): 
     && brokerArgs.length === 2
     && brokerArgs[0] === "--no-install"
     && brokerArgs[1] === "tsx";
-}
-
-function getNodeCommand(nodePath: string): string {
-  const executableName = nodePath.split(/[\\/]/).pop();
-  return executableName && /^node(?:js)?(?:\.exe)?$/i.test(executableName)
-    ? nodePath
-    : "node";
 }
 
 export function isBrokerHealthOkMessage(message: unknown, requestId: string): boolean {
@@ -78,24 +61,39 @@ export function getBrokerLaunchSpec(
   brokerPath: string,
   brokerCommand: string,
   brokerArgs: string[],
-  extensionDir: string = EXTENSION_DIR,
-  nodePath: string = process.execPath,
+  packageDir: string = PACKAGE_DIR,
+  execPath: string = process.execPath,
 ): BrokerLaunchSpec {
-  if (usesDefaultBrokerCommand(brokerCommand, brokerArgs)) {
-    // Load tsx in the broker process itself. The tsx CLI would re-spawn Node
-    // without windowsHide, and that grandchild opens a visible console window
-    // on Windows because the detached broker has no console to share.
+  if (!usesDefaultBrokerCommand(brokerCommand, brokerArgs)) {
     return {
-      command: getNodeCommand(nodePath),
-      args: ["--import", pathToFileURL(getTsxLoaderPath(extensionDir)).href, brokerPath],
-      captureStartupStderr: true,
+      command: brokerCommand,
+      args: [...brokerArgs, brokerPath],
+      captureStartupStderr: false,
     };
   }
 
+  if (process.versions.bun) {
+    // OMP uses the same switch to run its embedded Bun as a CLI.
+    return {
+      command: execPath,
+      args: ["--no-env-file", brokerPath],
+      captureStartupStderr: true,
+      envOverrides: { BUN_BE_BUN: "1" },
+    };
+  }
+
+  let loader: string;
+  try {
+    loader = getTsxLoaderPath(packageDir);
+  } catch (cause) {
+    throw new Error(`Intercom could not resolve its tsx dependency in ${packageDir}. Run npm ci in the source checkout or reinstall the plugin.`, { cause });
+  }
+  // Preload tsx directly so the detached broker doesn't spawn a second
+  // Node process without windowsHide.
   return {
-    command: brokerCommand,
-    args: [...brokerArgs, brokerPath],
-    captureStartupStderr: false,
+    command: execPath,
+    args: ["--import", pathToFileURL(loader).href, brokerPath],
+    captureStartupStderr: true,
   };
 }
 
@@ -151,7 +149,8 @@ export async function spawnBrokerIfNeeded(
 
     const brokerPath = join(dirname(fileURLToPath(import.meta.url)), "broker.ts");
     const launch = getBrokerLaunchSpec(brokerPath, brokerCommand, brokerArgs);
-    const child = spawn(launch.command, launch.args, getBrokerSpawnOptions(env, launch.captureStartupStderr));
+    const options = getBrokerSpawnOptions({ ...env, ...launch.envOverrides }, launch.captureStartupStderr);
+    const child = spawn(launch.command, launch.args, options);
     let brokerStderr = "";
     const rememberBrokerStderr = (chunk: Buffer | string) => {
       brokerStderr = `${brokerStderr}${chunk.toString()}`.slice(-BROKER_STARTUP_STDERR_LIMIT);
