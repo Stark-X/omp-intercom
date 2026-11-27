@@ -1,5 +1,7 @@
 # omp-intercom
 
+English | [简体中文](README.zh-CN.md)
+
 An [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) extension for two-way messaging with local OMP and Pi sessions, including sessions in other repositories. OMP and [pi-intercom](https://github.com/nicobailon/pi-intercom) share a broker. Each OMP session uses one connection and one identity for sending, receiving, and replying.
 
 ## Install
@@ -59,7 +61,7 @@ Optional settings go in `intercom/config.json` under the active OMP agent direct
 
 Set `inboundTrigger` to `replies` to wake only for inbound replies, or `never` to keep unsolicited messages quiet. Replies to outstanding `ask` calls always resolve their waiting tool call. `confirmSend` prompts before `send` and `ask` in interactive sessions. You can also set `stableId`, `brokerCommand`, and `brokerArgs`.
 
-See the [maintenance guide](MAINTENANCE.md) for development and repository automation.
+See the maintenance guide for development and repository automation ([English](MAINTENANCE.md) | [简体中文](MAINTENANCE.zh-CN.md)).
 
 ## License
 

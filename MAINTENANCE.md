@@ -1,5 +1,7 @@
 # Maintenance
 
+English | [简体中文](MAINTENANCE.zh-CN.md)
+
 ## Tests
 
 ```sh
