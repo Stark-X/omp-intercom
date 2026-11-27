@@ -1,0 +1,87 @@
+name: Update Simplified Chinese translations
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - src/i18n/en.json
+      - README.md
+      - MAINTENANCE.md
+      - THIRD_PARTY_NOTICES.md
+      - .github/translation-sources.json
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: translate-zh-cn
+  cancel-in-progress: false
+
+jobs:
+  translate:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      BASE_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - id: existing
+        name: Check for an open translation PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --state open \
+            --json author,headRefName,isCrossRepository,url \
+            --jq '[.[] | select(.isCrossRepository == false and .author.login == "github-actions[bot]" and (.headRefName | startswith("automation/zh-cn/")))][0].url // empty')"
+          printf 'url=%s\n' "$pr" >> "$GITHUB_OUTPUT"
+          if [[ -n "$pr" ]]; then
+            printf 'Translation PR awaiting review: %s\n' "$pr" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - if: steps.existing.outputs.url == ''
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - if: steps.existing.outputs.url == ''
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - if: steps.existing.outputs.url == ''
+        name: Translate and validate changed sources
+        env:
+          REPAIR_API_KEY: ${{ secrets.REPAIR_API_KEY }}
+          REPAIR_BASE_URL: ${{ vars.REPAIR_BASE_URL }}
+          REPAIR_MODEL: ${{ vars.REPAIR_MODEL }}
+          REPAIR_API: ${{ vars.REPAIR_API }}
+        run: node .github/scripts/translate.mjs
+      - if: steps.existing.outputs.url == ''
+        name: Open a translation PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add -- src/i18n/zh-CN.json README.zh-CN.md MAINTENANCE.zh-CN.md THIRD_PARTY_NOTICES.zh-CN.md .github/translation-sources.json
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git diff --cached --check
+          gh auth setup-git
+          base_sha="$(git ls-remote origin "refs/heads/$BASE_BRANCH" | cut -f1)"
+          if [[ "$base_sha" != "$(git rev-parse HEAD)" ]]; then
+            echo 'The default branch advanced during translation. Run the translation workflow on the new head.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          branch="automation/zh-cn/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m 'Sync Simplified Chinese translations'
+          git push origin "HEAD:refs/heads/$branch"
+          body="$RUNNER_TEMP/translation-pr.md"
+          {
+            printf 'Sync the Chinese UI catalog and documentation with their English sources. Please review the translated prose.\n\n'
+            printf '[Translation run](%s/%s/actions/runs/%s)\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > "$body"
+          pr="$(gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$branch" \
+            --title 'Sync Simplified Chinese translations' --body-file "$body")"
+          printf 'Opened translation PR: %s\n' "$pr" >> "$GITHUB_STEP_SUMMARY"

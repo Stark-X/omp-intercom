@@ -16,7 +16,11 @@
   "files": [
     "src",
     "skills",
-    "THIRD_PARTY_NOTICES.md"
+    "README.zh-CN.md",
+    "MAINTENANCE.md",
+    "MAINTENANCE.zh-CN.md",
+    "THIRD_PARTY_NOTICES.md",
+    "THIRD_PARTY_NOTICES.zh-CN.md"
   ],
   "omp": {
     "extensions": [

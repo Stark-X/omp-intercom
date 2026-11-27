@@ -9,7 +9,7 @@ const providerPackages = new Map([
   ["anthropic-messages", "@ai-sdk/anthropic"],
 ]);
 
-export function repairConfig(env) {
+export function providerSettings(env) {
   const base = env.REPAIR_BASE_URL?.trim();
   const model = env.REPAIR_MODEL?.trim();
   const api = env.REPAIR_API?.trim() || "chat-completions";
@@ -34,7 +34,11 @@ export function repairConfig(env) {
   if (/\/(chat\/completions|responses|messages)$/.test(baseURL)) {
     throw new Error("Set REPAIR_BASE_URL to the API prefix, with the /chat/completions, /responses or /messages suffix removed.");
   }
+  return { baseURL, model, api, providerPackage };
+}
 
+export function repairConfig(env) {
+  const { baseURL, model, providerPackage } = providerSettings(env);
   return {
     model: `repair-provider/${model}`,
     enabled_providers: ["repair-provider"],

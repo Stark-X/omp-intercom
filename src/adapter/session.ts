@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { english, type Translate } from "../i18n/index.ts";
 import { IntercomClient } from "../vendor/pi-intercom/broker/client.ts";
 import { spawnBrokerIfNeeded } from "../vendor/pi-intercom/broker/spawn.ts";
 import { getIntercomScopeId, setIntercomScopeId, type IntercomConfig } from "../vendor/pi-intercom/config.ts";
@@ -122,17 +123,17 @@ export class IntercomSession {
     return this.poolChange ?? this.connectCurrentPool();
   }
 
-  switchPool(pool: string | undefined): Promise<IntercomClient> {
-    if (this.poolChange) throw new Error("An Intercom pool switch is already in progress");
+  switchPool(pool: string | undefined, t: Translate = english): Promise<IntercomClient> {
+    if (this.poolChange) throw new Error(t("poolSwitchInProgress"));
     if (pool === this.pool) return this.connectCurrentPool();
-    this.poolChange = this.changePool(pool).finally(() => { this.poolChange = undefined; });
+    this.poolChange = this.changePool(pool, t).finally(() => { this.poolChange = undefined; });
     return this.poolChange;
   }
 
-  private async changePool(pool: string | undefined): Promise<IntercomClient> {
+  private async changePool(pool: string | undefined, t: Translate): Promise<IntercomClient> {
     await this.connection?.catch(() => {});
     this.signal.throwIfAborted();
-    if (this.messaging.hasOutboundAsks) throw new Error("Wait for the pending Intercom ask before switching pools");
+    if (this.messaging.hasOutboundAsks) throw new Error(t("poolPendingAsk"));
 
     const previous = this.client;
     this.client = undefined;

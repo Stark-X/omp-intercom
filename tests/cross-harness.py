@@ -2,18 +2,23 @@
 
 import argparse
 import contextlib
+import fcntl
 import http.server
 import json
 import os
-from pathlib import Path
+import pty
 import queue
+import select
 import shutil
 import signal
+import struct
 import subprocess
 import tempfile
+import termios
 import threading
 import time
 import uuid
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,6 +110,50 @@ class Rpc:
         assert not result.get("isError") and not result.get("details", {}).get("error"), result
         wait_for(self.idle, "Tool turn did not finish")
         return result
+
+
+@contextlib.contextmanager
+def terminal(args, cwd, env):
+    master, slave = pty.openpty()
+    try:
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+        process = subprocess.Popen(args, cwd=cwd, env={**env, "TERM": "xterm-256color"},
+                                   stdin=slave, stdout=slave, stderr=slave)
+        os.close(slave)
+        slave = None
+
+        def press(keys):
+            os.write(master, keys.encode())
+
+        def expect(*parts):
+            expected = [part.encode() for part in parts]
+            output = bytearray()
+            deadline = time.monotonic() + 15
+            while not all(part in output for part in expected):
+                left = deadline - time.monotonic()
+                ready = select.select([master], [], [], left)[0] if left > 0 else []
+                assert ready, f"Missing {[part for part in expected if part not in output]} in {output[-5000:]!r}"
+                try:
+                    data = os.read(master, 65536)
+                except OSError as error:
+                    raise AssertionError(f"Terminal exited ({process.poll()}): {output[-5000:]!r}") from error
+                assert data, f"Terminal exited ({process.poll()}): {output[-5000:]!r}"
+                output.extend(data)
+            return output.decode(errors="replace")
+
+        try:
+            yield press, expect
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+    finally:
+        os.close(master)
+        if slave is not None:
+            os.close(slave)
 
 
 class ModelFixture:
@@ -318,8 +367,21 @@ def run(pi_extension):
             wait_for(lambda: "OMP-to-OMP message" in json.dumps(second.messages()),
                      "Second OMP session did not receive the message")
 
+            ui_args = ["omp", "--no-session", "--no-extensions", "--offline", "--model", "fixture/omp-smoke", "-e", str(installed_extension)]
+            for index, (shortcut, label) in enumerate((("\t", "的消息"), ("\x1b[Z", "下一步任务（可选）"))):
+                peer_name = f"omp-zh-{index}"
+                ui_env = dict(omp_env, OMP_SKIP_SETUP="1", OMP_INTERCOM_LOCALE="zh-CN",
+                              OMP_INTERCOM_NAME=peer_name, OMP_INTERCOM_STABLE_ID=peer_name)
+                with terminal(ui_args, omp_project, ui_env) as (press, expect):
+                    expect("\x1b[?2004h")
+                    wait_for(lambda: peer_name in roster(), "Localized OMP did not join the shared broker")
+                    press("/intercom\r")
+                    expect(f"Intercom · {peer_name}", "会话池 omp-intercom-test", "写消息")
+                    press(shortcut)
+                    expect(label)
+
             print("OMP and Pi passed shared broker, list/status, OMP-to-OMP delivery, bidirectional send and ask/reply, "
-                  "no-wake, idle wake, session switching, and broker reconnect.")
+                  "no-wake, idle wake, session switching, broker reconnect, and localized native keyboard shortcuts.")
 
 
 if __name__ == "__main__":
