@@ -8,6 +8,16 @@ An [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) extension for messaging
 
 Verified with OMP **19.2.1** and pi-intercom **0.19.0**. The default broker launcher requires Node.js 20 or later on `PATH`.
 
+### With the OMP plugin manager
+
+```sh
+omp plugin install github:Stark-X/omp-intercom
+```
+
+OMP loads the installed plugin on its next launch. To fetch newer commits from the repository's default branch, run `omp plugin upgrade omp-intercom` and restart OMP. To install a specific release, append its GitHub tag to the install source as `#vX.Y.Z`.
+
+### From a local checkout
+
 ```sh
 git clone https://github.com/Stark-X/omp-intercom.git
 cd omp-intercom
