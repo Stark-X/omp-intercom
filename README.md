@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-An [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) extension for two-way messaging with local OMP and Pi sessions, including sessions in other repositories. OMP and [pi-intercom](https://github.com/nicobailon/pi-intercom) share a broker. Each OMP session uses one connection and one identity for sending, receiving, and replying.
+An [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) extension for messaging and handing over work between sessions. The interactive commands use OMP's terminal UI. OMP and [pi-intercom](https://github.com/nicobailon/pi-intercom) share a broker for local OMP and Pi sessions, including sessions in other repositories.
 
 ## Install
 
@@ -26,7 +26,19 @@ In Pi, install the matching release with `pi install npm:pi-intercom@0.19.0`. Ei
 
 ## Use
 
-Ask OMP to find another session or coordinate with it. The extension exposes the `intercom` tool.
+### From the keyboard
+
+- `/intercom` or **Alt+Shift+M** opens the session list. Select a peer and press **Enter** to compose a message, or press **H** to start a handover to that peer. In OMP, **Alt+M** opens the model selector.
+- `/handover` opens the handover picker. Use `/handover <session> [next task]` to address a peer by name or session ID, or `/handover <project path> [next task]` to target a project. Quote names or paths containing spaces. OMP generates a summary with your current model. Edit it and save with **Ctrl+Q** to send it, or press **Esc** to cancel.
+- `/intercom-id` inserts a contact snippet for the current Intercom session into the composer.
+- `/intercom-pool [name|default]` shows or switches the current routing pool. Sessions see peers in the same pool. Finish or cancel an outgoing ask before switching pools.
+- `/alias <name>` sets the current session alias. Use `/alias` or `/alias menu` to open the rename dialog.
+
+A handover to a project path uses the connected session in that directory. If none is connected and you are running inside Herdr, OMP can open a new project pane. The handover picker can also fetch sessions from enabled Herdr machines. Use `/handover <name@machine> [next task]` to address a remote peer directly. Remote handovers use SSH and the `pi-intercom` relay CLI on the receiving machine.
+
+### From the agent
+
+Ask OMP to find another session or coordinate with it using the `intercom` tool or `/skill:intercom`.
 
 | Action | Arguments | Behavior |
 | --- | --- | --- |
@@ -34,7 +46,7 @@ Ask OMP to find another session or coordinate with it. The extension exposes the
 | `send` | `to`, `message`, optional `noWake` | Deliver a message and report whether the broker delivered or queued it. |
 | `ask` | `to`, `message` | Ask a connected peer and wait for its correlated reply. |
 | `reply` | `message`, optional `replyTo` and `to` | Reply to an incoming ask. Use its `replyTo` ID if several asks are pending. |
-| `status` | | Show the current session ID, connection state, and pending asks. |
+| `status` | | Show the current session ID, connection state, pool, and pending asks. |
 
 Use a peer's name or a unique session ID prefix. Use the full session ID when names collide. Inbound messages wake idle OMP sessions by default. During an active turn they queue for a later turn. `noWake: true` makes a message available without starting a turn on its own.
 
@@ -46,7 +58,7 @@ OMP uses the default Pi broker directory `~/.pi/agent/intercom/`. If Pi uses a c
 OMP_INTERCOM_PI_AGENT_DIR=/path/to/pi-agent OMP_INTERCOM_NAME=frontend omp -e "$PWD"
 ```
 
-By default the extension uses the OMP session ID and name. `OMP_INTERCOM_NAME` overrides the display name. `OMP_INTERCOM_STABLE_ID` pins the broker address for a particular OMP instance. Use a distinct stable ID for each concurrently running instance. `PI_INTERCOM_ASK_TIMEOUT_MS` defaults to 600000 (ten minutes). Set it consistently across clients and the process that starts the broker.
+By default the extension uses the OMP session ID and name. `OMP_INTERCOM_NAME` sets the display name at startup. `/alias` can change it during the session. `OMP_INTERCOM_STABLE_ID` pins the broker address for a particular OMP instance. Use a distinct stable ID for each concurrently running instance. `PI_INTERCOM_ASK_TIMEOUT_MS` defaults to 600000 (ten minutes). Set it consistently across clients and the process that starts the broker.
 
 Optional settings go in `intercom/config.json` under the active OMP agent directory, normally `~/.omp/agent/`.
 
@@ -59,10 +71,10 @@ Optional settings go in `intercom/config.json` under the active OMP agent direct
 }
 ```
 
-Set `inboundTrigger` to `replies` to wake only for inbound replies, or `never` to keep unsolicited messages quiet. Replies to outstanding `ask` calls always resolve their waiting tool call. `confirmSend` prompts before `send` and `ask` in interactive sessions. You can also set `stableId`, `brokerCommand`, and `brokerArgs`.
+Set `inboundTrigger` to `replies` to wake only for inbound replies, or `never` to keep unsolicited messages quiet. Replies to outstanding `ask` calls always resolve their waiting tool call. `confirmSend` prompts before interactive sends, asks, and handovers. You can also set `stableId`, `brokerCommand`, and `brokerArgs`. For remote delivery, `crossMachine.remoteCommand` defaults to `pi-intercom`.
 
 See the maintenance guide for development and repository automation ([English](MAINTENANCE.md) | [简体中文](MAINTENANCE.zh-CN.md)).
 
 ## License
 
-MIT. The adapter vendors the broker and client from Nico Bailon's pi-intercom v0.19.0. See [Third-party notices](THIRD_PARTY_NOTICES.md).
+MIT. The adapter vendors shared Intercom code from Nico Bailon's pi-intercom v0.19.0. See [Third-party notices](THIRD_PARTY_NOTICES.md).

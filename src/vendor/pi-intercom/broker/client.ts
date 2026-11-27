@@ -32,6 +32,7 @@ interface SendOptions {
   retryOf?: string;
   provenance?: MessageProvenance;
   crossMachine?: CrossMachineProvenance;
+  targetEpoch?: string;
 }
 
 export interface SendResult extends DeliveryDetails {
@@ -693,6 +694,10 @@ export class IntercomClient extends EventEmitter {
         reject(toError(error));
       }
     });
+
+    if (options.targetEpoch && this.supportsFeature(EXACT_SEND_FEATURE) && !options.replyTo) {
+      return sendOnce(to, options.targetEpoch);
+    }
 
     if (!this.supportsFeature(EXACT_SEND_FEATURE) || options.replyTo) {
       return sendOnce();

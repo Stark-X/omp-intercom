@@ -44,7 +44,7 @@ export function registerIntercomTool(pi: ExtensionAPI, currentSession: () => Int
           const status = session.status();
           const pending = status.pendingAsks.map(ask => `- ${ask.from} (${ask.fromId}), replyTo ${ask.messageId}`);
           return output([
-            `${status.name} (${status.id}): ${status.connection}, ${status.status}`,
+            `${status.name} (${status.id}): ${status.connection}, ${status.status} · pool ${status.pool}`,
             ...(status.lastError ? [status.lastError] : []),
             ...(pending.length ? ["Pending asks", ...pending] : ["No pending asks."]),
           ].join("\n"), status);
@@ -58,6 +58,7 @@ export function registerIntercomTool(pi: ExtensionAPI, currentSession: () => Int
         }
         signal?.throwIfAborted();
         const client = await session.connect();
+        const messaging = session.messaging;
         signal?.throwIfAborted();
 
         if (args.action === "list") {
@@ -68,7 +69,7 @@ export function registerIntercomTool(pi: ExtensionAPI, currentSession: () => Int
 
         const message = args.message!;
         if (args.action === "reply") {
-          const reply = await session.messaging.reply(client, message, { to, replyTo }, signal);
+          const reply = await messaging.reply(client, message, { to, replyTo }, signal);
           return reportDelivery(sessionLabel(reply.from), reply.result, reply.message.id);
         }
 
@@ -83,7 +84,7 @@ export function registerIntercomTool(pi: ExtensionAPI, currentSession: () => Int
 
         const target = resolveAskTarget(await client.listSessions(), to!);
         if (target.id === session.id) throw new Error("Cannot ask the current session");
-        const answer = await session.messaging.ask(client, target, message, signal);
+        const answer = await messaging.ask(client, target, message, signal);
         return output(`Reply from ${sessionLabel(target)}:\n\n${messageBody(answer.message)}`, {
           from: target,
           messageId: answer.id,
