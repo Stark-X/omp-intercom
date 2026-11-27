@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { IntercomSession } from "../src/adapter/session.ts";
 import { IntercomClient } from "../src/vendor/pi-intercom/broker/client.ts";
-import { loadConfig } from "../src/vendor/pi-intercom/config.ts";
+import { getIntercomScopeId, loadConfig, setIntercomScopeId } from "../src/vendor/pi-intercom/config.ts";
 
 async function connectPeers(t: TestContext, stableId?: string) {
   const directory = mkdtempSync(join(tmpdir(), "omp-intercom-"));
@@ -108,6 +108,35 @@ test("a peer can ask after OMP reconnects and abandons its outbound ask", { time
   const inbound = await peer.send(session.id, { text: "Question in reverse", expectsReply: true, noWake: true });
   assert.equal(inbound.delivered, true, inbound.code ?? inbound.reason);
   assert.deepEqual(session.status().pendingAsks.map(({ messageId }) => messageId), [inbound.id]);
+});
+
+test("pool switches isolate pending asks and wait for outgoing replies", { timeout: 15_000 }, async t => {
+  const initialPool = getIntercomScopeId();
+  t.after(() => setIntercomScopeId(initialPool));
+  const { session, initial, peer } = await connectPeers(t);
+  const { outcome } = await startOutboundAsk(session, initial, peer, t.signal);
+  await assert.rejects(session.switchPool(`${initialPool ?? "default"}-other`), /pending Intercom ask/);
+  assert.equal(session.pool, initialPool);
+  session.messaging.rejectOutboundAsks(new Error("Test cancelled the outgoing ask"));
+  assert.match(String(await outcome), /cancelled the outgoing ask/);
+  await session.messaging.cancelAbandonedAsks(initial);
+
+  const inbound = await peer.send(session.id, { text: "Question in the starting pool", expectsReply: true, noWake: true });
+  assert.equal(inbound.delivered, true);
+  const other = await session.switchPool(`${initialPool ?? "default"}-other`);
+  assert.notEqual(other, initial);
+  assert.deepEqual((await other.listSessions()).map(row => row.id), [session.id]);
+  assert.deepEqual(session.status().pendingAsks, []);
+
+  const restored = await session.switchPool(initialPool);
+  assert.ok((await restored.listSessions()).some(row => row.id === peer.sessionId));
+  assert.deepEqual(session.status().pendingAsks.map(ask => ask.messageId), [inbound.id]);
+  const [[, message], reply] = await Promise.all([
+    once(peer, "message", { signal: t.signal }),
+    session.messaging.reply(restored, "Answer from the restored pool", { replyTo: inbound.id }),
+  ]);
+  assert.equal(reply.result.delivered, true);
+  assert.equal(message.replyTo, inbound.id);
 });
 
 for (const connected of [true, false]) {

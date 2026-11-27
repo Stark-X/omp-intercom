@@ -291,6 +291,7 @@ export async function openHerdrAppPane(input: {
   hc?: HerdrClient;
   app?: HerdrClient;
   signal?: AbortSignal;
+  argv?: readonly [string, ...string[]];
 }): Promise<ProjectPaneLaunch> {
   const projectRoot = resolveProjectRoot(input.cwd);
   const hc = input.hc ?? createHerdrClient({ bin: "hc", missingMessage: HC_MISSING });
@@ -303,9 +304,9 @@ export async function openHerdrAppPane(input: {
   }
 
   const app = input.app ?? createHerdrClient({ bin: "herdr-app", missingMessage: APP_MISSING });
-  const command = projectCommand();
+  const [command, ...args] = input.argv ?? [projectCommand()];
   // herdr-core's daemon resolves the command on its own PATH, which may lack pi (mise, nvm): run it with the caller's PATH.
-  const argv = process.env.PATH ? ["/usr/bin/env", `PATH=${process.env.PATH}`, command] : [command];
+  const argv = process.env.PATH ? ["/usr/bin/env", `PATH=${process.env.PATH}`, command, ...args] : [command, ...args];
   let labels = ["--label", `herdr.space=${space}`, "--label", `herdr.tab=${tab}`];
   if (input.placement === "space") {
     const target = await spaceForFolder(app, hc, space, projectRoot, input.signal);
@@ -378,6 +379,7 @@ export async function waitForProjectSession(client: ListSessionsClient, input: {
   signal?: AbortSignal;
   timeoutMs?: number;
   pollMs?: number;
+  agentName?: string;
 }): Promise<SessionInfo> {
   const startedAt = Date.now();
   const timeoutMs = input.timeoutMs ?? DEFAULT_PROJECT_AGENT_TIMEOUT_MS;
@@ -410,7 +412,7 @@ export async function waitForProjectSession(client: ListSessionsClient, input: {
     await sleep(pollMs, input.signal);
   }
 
-  throw new Error(`Timed out waiting for a Pi intercom session to register in ${input.projectRoot}. The Herdr pane may still be starting, or pi-intercom may not be loaded there.`);
+  throw new Error(`Timed out waiting for ${input.agentName ?? "Pi"} to register with Intercom in ${input.projectRoot}. The Herdr pane may still be starting, or the extension may not be loaded there.`);
 }
 
 function formatSessionRefs(sessions: SessionInfo[]): string {

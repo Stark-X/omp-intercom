@@ -32,7 +32,7 @@ export class Messaging {
 
   constructor(
     private readonly askTimeoutMs: number,
-    private readonly sessionId: string,
+    private readonly cancellationOwner: string,
     private readonly pendingAskCancellations = new Map<string, string>(),
   ) {
     this.tracker = new ReplyTracker(askTimeoutMs);
@@ -56,9 +56,13 @@ export class Messaging {
 
   rejectOutboundAsks(error: Error): void {
     for (const [id, waiter] of this.waiters) {
-      this.pendingAskCancellations.set(id, this.sessionId);
+      this.pendingAskCancellations.set(id, this.cancellationOwner);
       waiter.reject(error);
     }
+  }
+
+  get hasOutboundAsks(): boolean {
+    return this.waiters.size > 0;
   }
 
   close(error: Error): void {
@@ -69,7 +73,7 @@ export class Messaging {
 
   async cancelAbandonedAsks(client: Pick<IntercomClient, "cancelAsk" | "listSessions">): Promise<void> {
     const pending = Array.from(this.pendingAskCancellations)
-      .filter(([, sessionId]) => sessionId === this.sessionId)
+      .filter(([, owner]) => owner === this.cancellationOwner)
       .map(([id]) => id);
     for (let offset = 0; offset < pending.length; offset += CANCELLATION_BATCH_SIZE) {
       const batch = pending.slice(offset, offset + CANCELLATION_BATCH_SIZE);
@@ -126,7 +130,7 @@ export class Messaging {
           if (client.isConnected()) {
             client.cancelAsk(id);
           } else {
-            this.pendingAskCancellations.set(id, this.sessionId);
+            this.pendingAskCancellations.set(id, this.cancellationOwner);
           }
         }
       }

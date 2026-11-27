@@ -232,6 +232,8 @@ def run(pi_extension):
             state = omp.call("get_state")
             omp_id = state["sessionId"]
             assert any(tool["name"] == "intercom" for tool in state["dumpTools"])
+            commands = {entry["name"].lstrip("/") for entry in omp.call("get_available_commands")["commands"]}
+            assert {"intercom", "handover", "intercom-id", "intercom-pool", "alias"} <= commands, commands
             wait_for(lambda: omp_id in roster(), "OMP did not start the broker and register")
             first_broker = int(broker_pid.read_text())
             assert not (omp_dir / "intercom/broker.sock").exists()

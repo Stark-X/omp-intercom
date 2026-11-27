@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { registerIntercomCommands } from "./adapter/commands.ts";
 import { IntercomSession } from "./adapter/session.ts";
 import { registerIntercomTool } from "./adapter/tools.ts";
 import { getAskTimeoutMs, loadConfig } from "./vendor/pi-intercom/config.ts";
@@ -18,7 +19,7 @@ export default function intercom(pi: ExtensionAPI) {
 
   let session: IntercomSession | undefined;
   let shutdown = Promise.resolve();
-  // Ask IDs map to their broker session IDs, which can survive an OMP session switch.
+  // Ask IDs map to their scoped broker identities, which can survive an OMP session switch.
   const pendingAskCancellations = new Map<string, string>();
 
   function stopSession() {
@@ -35,6 +36,7 @@ export default function intercom(pi: ExtensionAPI) {
   }
 
   registerIntercomTool(pi, () => session);
+  registerIntercomCommands(pi, () => session);
   pi.on("session_start", (_event, ctx) => startSession(ctx));
   pi.on("session_switch", (_event, ctx) => startSession(ctx));
   pi.on("session_clear", (_event, ctx) => startSession(ctx));

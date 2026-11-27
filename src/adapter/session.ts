@@ -1,22 +1,25 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { IntercomClient } from "../vendor/pi-intercom/broker/client.ts";
 import { spawnBrokerIfNeeded } from "../vendor/pi-intercom/broker/spawn.ts";
-import type { IntercomConfig } from "../vendor/pi-intercom/config.ts";
+import { getIntercomScopeId, setIntercomScopeId, type IntercomConfig } from "../vendor/pi-intercom/config.ts";
 import type { Message, SessionInfo } from "../vendor/pi-intercom/types.ts";
 import { Messaging, messageBody, sessionLabel } from "./messaging.ts";
 
 export class IntercomSession {
   readonly hostId: string;
   readonly id: string;
-  readonly messaging: Messaging;
+  private readonly lifetime = new AbortController();
+  private readonly messagesByPool = new Map<string | undefined, Messaging>();
   private readonly startedAt = Date.now();
   private client?: IntercomClient;
   private connection?: Promise<IntercomClient>;
+  private poolChange?: Promise<IntercomClient>;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private presenceTimer?: ReturnType<typeof setInterval>;
   private retryDelay = 1000;
   private lastError?: string;
   private lastPresence?: string;
+  private alias?: string;
   private stopped = false;
 
   constructor(
@@ -24,13 +27,34 @@ export class IntercomSession {
     private readonly ctx: ExtensionContext,
     readonly config: IntercomConfig,
     private readonly brokerEnv: NodeJS.ProcessEnv,
-    askTimeoutMs: number,
+    private readonly askTimeoutMs: number,
     private readonly previousShutdown: Promise<void>,
-    pendingAskCancellations: Map<string, string>,
+    private readonly pendingAskCancellations: Map<string, string>,
   ) {
     this.hostId = ctx.sessionManager.getSessionId();
     this.id = process.env.OMP_INTERCOM_STABLE_ID?.trim() || config.stableId || this.hostId;
-    this.messaging = new Messaging(askTimeoutMs, this.id, pendingAskCancellations);
+  }
+
+  get signal(): AbortSignal {
+    return this.lifetime.signal;
+  }
+
+  get pool(): string | undefined {
+    return getIntercomScopeId(this.brokerEnv);
+  }
+
+  get brokerAgentDir(): string | undefined {
+    return this.brokerEnv.PI_CODING_AGENT_DIR;
+  }
+
+  get messaging(): Messaging {
+    const pool = this.pool;
+    const existing = this.messagesByPool.get(pool);
+    if (existing) return existing;
+    const owner = JSON.stringify([this.id, pool ?? null]);
+    const messages = new Messaging(this.askTimeoutMs, owner, this.pendingAskCancellations);
+    this.messagesByPool.set(pool, messages);
+    return messages;
   }
 
   private isCurrent(): boolean {
@@ -38,14 +62,26 @@ export class IntercomSession {
   }
 
   private presence() {
-    const name = process.env.OMP_INTERCOM_NAME?.trim() || this.pi.getSessionName()?.trim();
+    const name = this.alias || process.env.OMP_INTERCOM_NAME?.trim() || this.pi.getSessionName()?.trim();
     const model = this.ctx.model;
+    const usage = this.ctx.getContextUsage?.();
     return {
       name: name || `omp-${this.id.slice(0, 18)}`,
       runtimeFallbackAlias: !name,
       model: model ? `${model.provider}/${model.id}` : "unknown",
       status: this.ctx.isIdle() ? "idle" : "busy",
+      ...(usage && Number.isFinite(usage.percent) && Number.isFinite(usage.tokens) && usage.contextWindow > 0
+        ? { contextPct: Math.round(usage.percent), contextTokens: usage.tokens, contextWindow: usage.contextWindow }
+        : {}),
     };
+  }
+
+  async setAlias(alias: string): Promise<void> {
+    this.signal.throwIfAborted();
+    await this.pi.setSessionName(alias);
+    this.signal.throwIfAborted();
+    this.alias = alias;
+    this.refreshPresence();
   }
 
   refreshPresence(): void {
@@ -54,7 +90,7 @@ export class IntercomSession {
     const next = JSON.stringify(presence);
     if (next === this.lastPresence) return;
     try {
-      this.client.updatePresence(presence);
+      this.client.updatePresence({ contextPct: null, contextTokens: null, contextWindow: null, ...presence });
       this.lastPresence = next;
     } catch (error) {
       this.lastError = String(error);
@@ -64,6 +100,7 @@ export class IntercomSession {
   status() {
     return {
       id: this.id,
+      pool: this.pool ?? "default",
       ...this.presence(),
       connection: this.client?.isConnected() ? "connected" : this.connection ? "connecting" : "offline",
       ...(this.lastError ? { lastError: this.lastError } : {}),
@@ -82,6 +119,33 @@ export class IntercomSession {
   }
 
   connect(): Promise<IntercomClient> {
+    return this.poolChange ?? this.connectCurrentPool();
+  }
+
+  switchPool(pool: string | undefined): Promise<IntercomClient> {
+    if (this.poolChange) throw new Error("An Intercom pool switch is already in progress");
+    if (pool === this.pool) return this.connectCurrentPool();
+    this.poolChange = this.changePool(pool).finally(() => { this.poolChange = undefined; });
+    return this.poolChange;
+  }
+
+  private async changePool(pool: string | undefined): Promise<IntercomClient> {
+    await this.connection?.catch(() => {});
+    this.signal.throwIfAborted();
+    if (this.messaging.hasOutboundAsks) throw new Error("Wait for the pending Intercom ask before switching pools");
+
+    const previous = this.client;
+    this.client = undefined;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    this.retryDelay = 1000;
+    setIntercomScopeId(pool, this.brokerEnv);
+    setIntercomScopeId(pool);
+    await previous?.disconnect();
+    return this.connectCurrentPool();
+  }
+
+  private connectCurrentPool(): Promise<IntercomClient> {
     if (!this.isCurrent()) return Promise.reject(new Error("Intercom session is closed"));
     if (this.connection) return this.connection;
     if (this.client?.isConnected()) return Promise.resolve(this.client);
@@ -100,9 +164,11 @@ export class IntercomSession {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.lifetime.abort(new Error("Intercom session ended"));
     clearTimeout(this.retryTimer);
     clearInterval(this.presenceTimer);
-    this.messaging.close(new Error("Intercom session ended"));
+    for (const messaging of this.messagesByPool.values()) messaging.close(new Error("Intercom session ended"));
+    await this.poolChange?.catch(() => {});
     await this.connection?.catch(() => {});
     const client = this.client;
     if (client?.isConnected()) {
